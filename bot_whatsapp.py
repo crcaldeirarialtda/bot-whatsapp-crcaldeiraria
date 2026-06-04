@@ -22,13 +22,13 @@ client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
 def carregar_planilha():
     try:
-        df = pd.read_excel(CAMINHO_PLANILHA, sheet_name="STATUS DE FABRICAÇÃO", skiprows=5)
+        df = pd.read_excel(CAMINHO_PLANILHA, sheet_name="STATUS DE FABRICAÇÃO", skiprows=5, nrows=500)
         df = df.dropna(how="all")
         colunas = ["Cliente", "Pedido", "OP", "Descrição", "Quantidade TOTAL",
                    "Data da necessidade", "STATUS", "STATUS ENTREGA", "OBSERVAÇÕES"]
         colunas_existentes = [c for c in colunas if c in df.columns]
         df_resumo = df[colunas_existentes].dropna(subset=["Cliente"])
-        return df_resumo.to_string(index=False, max_rows=200)
+        return df_resumo.to_string(index=False, max_rows=500)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
 
