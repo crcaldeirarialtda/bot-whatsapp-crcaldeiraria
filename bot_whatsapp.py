@@ -12,54 +12,39 @@ import os
 
 app = Flask(__name__)
 
-# ============================================================
-# CONFIGURAÇÕES - PREENCHA AQUI
-# ============================================================
 CLAUDE_API_KEY = "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"
 EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
 EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4a033c"
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
 CAMINHO_PLANILHA = "planilha.xlsx"
-# ============================================================
 
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
 def carregar_planilha():
-    """Carrega e resume os dados da planilha para enviar ao Claude."""
     try:
         df = pd.read_excel(CAMINHO_PLANILHA, sheet_name="STATUS DE FABRICAÇÃO", skiprows=5)
         df = df.dropna(how="all")
-
-        # Seleciona colunas mais importantes
         colunas = ["Cliente", "Pedido", "OP", "Descrição", "Quantidade TOTAL",
                    "Data da necessidade", "STATUS", "STATUS ENTREGA", "OBSERVAÇÕES"]
         colunas_existentes = [c for c in colunas if c in df.columns]
         df_resumo = df[colunas_existentes].dropna(subset=["Cliente"])
-
         return df_resumo.to_string(index=False, max_rows=200)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
 
 def enviar_mensagem_whatsapp(numero, mensagem):
-    """Envia mensagem via Evolution API."""
     url = f"{EVOLUTION_API_URL}/message/sendText/{EVOLUTION_INSTANCE}"
-    headers = {
-        "apikey": EVOLUTION_API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "number": numero,
-        "text": mensagem
-    }
+    headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
+    payload = {"number": numero, "text": mensagem}
     try:
         resp = requests.post(url, headers=headers, json=payload)
+        print(f"Envio status: {resp.status_code} - {resp.text[:200]}")
         return resp.status_code == 200
     except Exception as e:
         print(f"Erro ao enviar mensagem: {e}")
         return False
 
 def consultar_claude(pergunta, dados_planilha):
-    """Envia a pergunta e os dados para o Claude e retorna a resposta."""
     prompt = f"""Você é um assistente da empresa CR Caldeiraria.
 Abaixo estão os dados de acompanhamento e controle da produção da empresa.
 Responda a pergunta do usuário de forma clara e objetiva em português.
@@ -70,7 +55,6 @@ DADOS DA PLANILHA:
 
 PERGUNTA DO USUÁRIO:
 {pergunta}"""
-
     resposta = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=1000,
@@ -80,34 +64,47 @@ PERGUNTA DO USUÁRIO:
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    """Recebe mensagens do WhatsApp via Evolution API."""
     try:
         data = request.json
+        print(f"Webhook recebido: {json.dumps(data)[:500]}")
 
-        # Ignora mensagens enviadas pelo próprio bot
-        if data.get("data", {}).get("key", {}).get("fromMe"):
+        numero = None
+        mensagem = None
+        from_me = False
+
+        if "message" in data and "conversation" in data.get("message", {}):
+            mensagem = data["message"]["conversation"]
+            numero = data.get("key", {}).get("remoteJid", "")
+            from_me = data.get("key", {}).get("fromMe", False)
+        elif "data" in data:
+            d = data["data"]
+            from_me = d.get("key", {}).get("fromMe", False)
+            numero = d.get("key", {}).get("remoteJid", "")
+            msg = d.get("message", {})
+            mensagem = msg.get("conversation") or msg.get("extendedTextMessage", {}).get("text", "")
+        elif "remoteJid" in data:
+            numero = data.get("remoteJid", "")
+            mensagem = data.get("message", "")
+            from_me = data.get("fromMe", False)
+
+        if from_me:
             return jsonify({"status": "ok"})
 
-        # Extrai número e mensagem
-        numero = data.get("data", {}).get("key", {}).get("remoteJid", "")
-        mensagem = data.get("data", {}).get("message", {}).get("conversation", "")
-
         if not mensagem or not numero:
+            print(f"Mensagem ou número não encontrado. Data: {data}")
             return jsonify({"status": "ok"})
 
         print(f"Mensagem recebida de {numero}: {mensagem}")
-
-        # Carrega planilha e consulta Claude
         dados = carregar_planilha()
         resposta = consultar_claude(mensagem, dados)
-
-        # Envia resposta
+        print(f"Resposta: {resposta[:100]}")
         enviar_mensagem_whatsapp(numero, resposta)
-
         return jsonify({"status": "ok"})
 
     except Exception as e:
         print(f"Erro no webhook: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/", methods=["GET"])
