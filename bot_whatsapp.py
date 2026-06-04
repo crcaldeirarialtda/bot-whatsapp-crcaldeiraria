@@ -38,7 +38,7 @@ def enviar_mensagem_whatsapp(numero, mensagem):
     payload = {"number": numero, "text": mensagem}
     try:
         resp = requests.post(url, headers=headers, json=payload)
-        print(f"Envio status: {resp.status_code} - {resp.text[:200]}")
+        print(f"Envio status: {resp.status_code}")
         return resp.status_code == 200
     except Exception as e:
         print(f"Erro ao enviar mensagem: {e}")
@@ -68,6 +68,20 @@ def webhook():
         data = request.json
         print(f"Webhook recebido: {json.dumps(data)[:500]}")
 
+        if "query" in data and "inputs" in data:
+            inputs = data.get("inputs", {})
+            from_me = inputs.get("fromMe", False)
+            if from_me:
+                return jsonify({"output": ""})
+            mensagem = data.get("query", "")
+            if not mensagem:
+                return jsonify({"output": ""})
+            print(f"Mensagem recebida: {mensagem}")
+            dados = carregar_planilha()
+            resposta = consultar_claude(mensagem, dados)
+            print(f"Resposta: {resposta[:100]}")
+            return jsonify({"output": resposta})
+
         numero = None
         mensagem = None
         from_me = False
@@ -82,16 +96,12 @@ def webhook():
             numero = d.get("key", {}).get("remoteJid", "")
             msg = d.get("message", {})
             mensagem = msg.get("conversation") or msg.get("extendedTextMessage", {}).get("text", "")
-        elif "remoteJid" in data:
-            numero = data.get("remoteJid", "")
-            mensagem = data.get("message", "")
-            from_me = data.get("fromMe", False)
 
         if from_me:
             return jsonify({"status": "ok"})
 
         if not mensagem or not numero:
-            print(f"Mensagem ou número não encontrado. Data: {data}")
+            print(f"Formato nao reconhecido. Data: {data}")
             return jsonify({"status": "ok"})
 
         print(f"Mensagem recebida de {numero}: {mensagem}")
