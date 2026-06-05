@@ -12,7 +12,7 @@ import os
 
 app = Flask(__name__)
 
-CLAUDE_API_KEY = "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"
+CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
 EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4a033c"
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
