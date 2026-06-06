@@ -55,8 +55,6 @@ def filtrar_dados(df, pergunta):
     df_filtrado = pd.DataFrame()
     colunas_texto = [c for c in df.columns if df[c].dtype == object]
     encontrou = False
-
-    # 1. Busca por número específico (OC, pedido) - sem limite de linhas
     numeros = re.findall(r'\b(\d{5,})\b', pergunta)
     for numero in numeros:
         for col in df.columns:
@@ -64,8 +62,6 @@ def filtrar_dados(df, pergunta):
             if mask.any():
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
                 encontrou = True
-
-    # 2. Filtro por data de vencimento
     col_vencimento = None
     for col in df.columns:
         if "vencimento" in col.lower():
@@ -78,8 +74,6 @@ def filtrar_dados(df, pergunta):
         if mask_data.any():
             df_filtrado = pd.concat([df_filtrado, df[mask_data]]).drop_duplicates()
             encontrou = True
-
-    # 3. Filtro por nome de cliente
     palavras = re.findall(r'\b[A-Z]{4,}\b', pergunta_upper)
     for palavra in palavras:
         for col in colunas_texto:
@@ -87,15 +81,10 @@ def filtrar_dados(df, pergunta):
             if mask.any():
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
                 encontrou = True
-
-    # Sem resultado específico: retorna primeiras 100 linhas
     if not encontrou:
         df_filtrado = df.head(100)
-
-    # Limita apenas buscas genéricas (cliente) para não exceder tokens
     if encontrou and len(numeros) == 0 and not mes and len(df_filtrado) > 200:
         df_filtrado = df_filtrado.head(200)
-
     return df_filtrado
 
 def carregar_dados(pergunta):
@@ -124,16 +113,23 @@ def enviar_mensagem_whatsapp(numero, mensagem):
 
 def consultar_claude(pergunta, dados_planilha):
     prompt = f"""Você é um assistente da empresa CR Caldeiraria.
-Abaixo estão os dados de acompanhamento e controle da produção da empresa.
-Responda a pergunta do usuário de forma clara e objetiva em português.
-Se a informação não estiver nos dados, diga que não encontrou.
+Abaixo estão os dados de produção da empresa.
+Responda de forma clara e objetiva em português.
+REGRAS IMPORTANTES:
+- Agrupe itens do mesmo pedido (não repita o mesmo número de pedido)
+- Liste apenas: Pedido, Descrição resumida, Vencimento, Status
+- Seja conciso — máximo 10 itens por resposta
+- Se houver mais de 10, informe quantos há no total e liste os mais urgentes
+- Se a informação não estiver nos dados, diga que não encontrou
+
 DADOS DA PLANILHA:
 {dados_planilha}
+
 PERGUNTA DO USUÁRIO:
 {pergunta}"""
     resposta = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=500,
+        max_tokens=800,
         messages=[{"role": "user", "content": prompt}]
     )
     return resposta.content[0].text
