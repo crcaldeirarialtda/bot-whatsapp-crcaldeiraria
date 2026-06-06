@@ -18,12 +18,12 @@ EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
 EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4a033c"
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
 GOOGLE_SHEET_ID = "10-DezJakw5Qn7zZdC30mWqejZq7F3_vpV4Qg9qbmKFo"
-GOOGLE_SHEET_GID = "306020472"
+GOOGLE_SHEET_GID = "1509870099"
 
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
 def carregar_planilha_completa():
-    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid=GOOGLE_SHEET_GID = "1509870099"
+    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid={GOOGLE_SHEET_GID}"
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
     df = pd.read_csv(io.StringIO(resp.text))
@@ -59,7 +59,6 @@ def filtrar_dados(df, pergunta):
     colunas_texto = [c for c in df.columns if df[c].dtype == object]
     encontrou = False
 
-    # Filtro por data de vencimento
     col_vencimento = None
     for col in df.columns:
         if "vencimento" in col.lower() or "venc" in col.lower():
@@ -74,7 +73,6 @@ def filtrar_dados(df, pergunta):
             df_filtrado = pd.concat([df_filtrado, df[mask_data]]).drop_duplicates()
             encontrou = True
 
-    # Filtro por palavras-chave
     for palavra in palavras:
         if len(palavra) < 3:
             continue
@@ -84,7 +82,6 @@ def filtrar_dados(df, pergunta):
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
                 encontrou = True
 
-    # Se não encontrou nada específico, retorna todas as linhas (até 500)
     if not encontrou:
         df_filtrado = df.head(500)
 
