@@ -10,6 +10,7 @@ import requests
 import json
 import os
 import io
+import re
 
 app = Flask(__name__)
 
@@ -18,22 +19,43 @@ EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
 EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4a033c"
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
 GOOGLE_SHEET_ID = "10-DezJakw5Qn7zZdC30mWqejZq7F3_vpV4Qg9qbmKFo"
+GOOGLE_SHEET_GID = "993531814"
 
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
-def carregar_planilha():
+def carregar_planilha_completa():
+    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid={GOOGLE_SHEET_GID}"
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+    df = pd.read_csv(io.StringIO(resp.text))
+    df = df.dropna(how="all")
+    return df
+
+def filtrar_dados(df, pergunta):
+    pergunta_upper = pergunta.upper()
+    palavras = re.findall(r'\b[A-Z0-9]{3,}\b', pergunta_upper)
+    df_filtrado = pd.DataFrame()
+    colunas_texto = [c for c in df.columns if df[c].dtype == object]
+    for palavra in palavras:
+        if len(palavra) < 3:
+            continue
+        for col in colunas_texto:
+            mask = df[col].astype(str).str.upper().str.contains(palavra, na=False)
+            if mask.any():
+                df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
+    if df_filtrado.empty:
+        df_filtrado = df.head(80)
+    return df_filtrado.head(150)
+
+def carregar_dados(pergunta):
     try:
-        url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid=1376500302"
-        resp = requests.get(url, timeout=15)
-        resp.raise_for_status()
-        df = pd.read_csv(io.StringIO(resp.text))
-        df = df.dropna(how="all")
+        df = carregar_planilha_completa()
         for col in ["Status", "STATUS", "status"]:
             if col in df.columns:
                 df = df[~df[col].astype(str).str.contains("Expedido|EXPEDIDO|expedido", na=False)]
                 break
-        df = df.head(1500)
-        return df.to_string(index=False, max_rows=1500)
+        df_filtrado = filtrar_dados(df, pergunta)
+        return df_filtrado.to_string(index=False)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
 
@@ -71,7 +93,11 @@ PERGUNTA DO USUÁRIO:
 def webhook():
     try:
         data = request.json
-        print(f"Webhook recebido: {json.dumps(data)[:500]}")
+        print(f"Webhook recebido: {json.dumps(data)[:300]}")
+
+        mensagem = None
+        numero = None
+        from_me = False
 
         if "query" in data and "inputs" in data:
             inputs = data.get("inputs", {})
@@ -81,43 +107,44 @@ def webhook():
             mensagem = data.get("query", "")
             if not mensagem:
                 return jsonify({"output": ""})
-            print(f"Mensagem recebida: {mensagem}")
-            dados = carregar_planilha()
+            print(f"Mensagem: {mensagem}")
+            dados = carregar_dados(mensagem)
             resposta = consultar_claude(mensagem, dados)
             print(f"Resposta: {resposta[:100]}")
             return jsonify({"output": resposta})
 
-        numero = None
-        mensagem = None
-        from_me = False
-
-        if "message" in data and "conversation" in data.get("message", {}):
-            mensagem = data["message"]["conversation"]
-            numero = data.get("key", {}).get("remoteJid", "")
-            from_me = data.get("key", {}).get("fromMe", False)
+        if "event" in data and data.get("event") == "messages.upsert":
+            d = data.get("data", {})
+            from_me = d.get("key", {}).get("fromMe", False)
+            if from_me:
+                return jsonify({"status": "ok"})
+            numero = d.get("key", {}).get("remoteJid", "")
+            msg = d.get("message", {})
+            mensagem = (msg.get("conversation") or
+                       msg.get("extendedTextMessage", {}).get("text", ""))
         elif "data" in data:
             d = data["data"]
             from_me = d.get("key", {}).get("fromMe", False)
+            if from_me:
+                return jsonify({"status": "ok"})
             numero = d.get("key", {}).get("remoteJid", "")
             msg = d.get("message", {})
-            mensagem = msg.get("conversation") or msg.get("extendedTextMessage", {}).get("text", "")
-
-        if from_me:
-            return jsonify({"status": "ok"})
+            mensagem = (msg.get("conversation") or
+                       msg.get("extendedTextMessage", {}).get("text", ""))
 
         if not mensagem or not numero:
-            print(f"Formato nao reconhecido. Data: {data}")
+            print(f"Sem mensagem/número.")
             return jsonify({"status": "ok"})
 
-        print(f"Mensagem recebida de {numero}: {mensagem}")
-        dados = carregar_planilha()
+        print(f"Mensagem de {numero}: {mensagem}")
+        dados = carregar_dados(mensagem)
         resposta = consultar_claude(mensagem, dados)
         print(f"Resposta: {resposta[:100]}")
         enviar_mensagem_whatsapp(numero, resposta)
         return jsonify({"status": "ok"})
 
     except Exception as e:
-        print(f"Erro no webhook: {e}")
+        print(f"Erro: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
