@@ -101,9 +101,9 @@ def filtrar_dados(df, pergunta):
     if not encontrou:
         df_filtrado = df.head(100)
 
-    if len(df_filtrado) > 200:
-        df_filtrado = df_filtrado.head(200)
-
+   if not encontrou and len(df_filtrado) > 100:
+        df_filtrado = df_filtrado.head(100)
+       
     return df_filtrado
 
 def carregar_dados(pergunta):
