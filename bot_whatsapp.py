@@ -11,7 +11,6 @@ import os
 import io
 import re
 from datetime import datetime
-
 app = Flask(__name__)
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
@@ -19,7 +18,6 @@ EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
 GOOGLE_SHEET_ID = "10-DezJakw5Qn7zZdC30mWqejZq7F3_vpV4Qg9qbmKFo"
 GOOGLE_SHEET_GID = "1543725428"
-
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
 def carregar_planilha_completa():
@@ -54,17 +52,35 @@ def extrair_mes_ano(pergunta):
 
 def filtrar_dados(df, pergunta):
     pergunta_upper = pergunta.upper()
-    palavras = re.findall(r'\b[A-Z0-9]{3,}\b', pergunta_upper)
     df_filtrado = pd.DataFrame()
     colunas_texto = [c for c in df.columns if df[c].dtype == object]
     encontrou = False
 
+    # 1. Busca por OC específica (prioridade máxima - retorna TODAS as linhas)
+    oc_match = re.search(r'OC[.\s]*(\d{5,})', pergunta_upper)
+    if oc_match:
+        numero_oc = oc_match.group(1)
+        for col in colunas_texto:
+            mask = df[col].astype(str).str.contains(numero_oc, na=False)
+            if mask.any():
+                return df[mask]
+
+    # 2. Busca por número de pedido longo
+    pedido_match = re.search(r'\b(\d{7,})\b', pergunta)
+    if pedido_match:
+        numero = pedido_match.group(1)
+        for col in colunas_texto:
+            mask = df[col].astype(str).str.contains(numero, na=False)
+            if mask.any():
+                df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
+                encontrou = True
+
+    # 3. Filtro por data de vencimento
     col_vencimento = None
     for col in df.columns:
-        if "vencimento" in col.lower() or "venc" in col.lower():
+        if "vencimento" in col.lower():
             col_vencimento = col
             break
-
     mes, ano = extrair_mes_ano(pergunta)
     if col_vencimento and mes:
         df[col_vencimento] = pd.to_datetime(df[col_vencimento], errors="coerce", dayfirst=True)
@@ -73,9 +89,9 @@ def filtrar_dados(df, pergunta):
             df_filtrado = pd.concat([df_filtrado, df[mask_data]]).drop_duplicates()
             encontrou = True
 
+    # 4. Filtro por nome de cliente (palavras com 4+ letras)
+    palavras = re.findall(r'\b[A-Z]{4,}\b', pergunta_upper)
     for palavra in palavras:
-        if len(palavra) < 3:
-            continue
         for col in colunas_texto:
             mask = df[col].astype(str).str.upper().str.contains(palavra, na=False)
             if mask.any():
@@ -83,7 +99,7 @@ def filtrar_dados(df, pergunta):
                 encontrou = True
 
     if not encontrou:
-        df_filtrado = df.head(500)
+        df_filtrado = df.head(100)
 
     if len(df_filtrado) > 200:
         df_filtrado = df_filtrado.head(200)
@@ -119,10 +135,8 @@ def consultar_claude(pergunta, dados_planilha):
 Abaixo estão os dados de acompanhamento e controle da produção da empresa.
 Responda a pergunta do usuário de forma clara e objetiva em português.
 Se a informação não estiver nos dados, diga que não encontrou.
-
 DADOS DA PLANILHA:
 {dados_planilha}
-
 PERGUNTA DO USUÁRIO:
 {pergunta}"""
     resposta = client.messages.create(
@@ -140,7 +154,6 @@ def webhook():
         mensagem = None
         numero = None
         from_me = False
-
         if "query" in data and "inputs" in data:
             inputs = data.get("inputs", {})
             from_me = inputs.get("fromMe", False)
@@ -154,7 +167,6 @@ def webhook():
             resposta = consultar_claude(mensagem, dados)
             print(f"Resposta: {resposta[:100]}")
             return jsonify({"output": resposta})
-
         if "event" in data and data.get("event") == "messages.upsert":
             d = data.get("data", {})
             from_me = d.get("key", {}).get("fromMe", False)
@@ -173,18 +185,15 @@ def webhook():
             msg = d.get("message", {})
             mensagem = (msg.get("conversation") or
                        msg.get("extendedTextMessage", {}).get("text", ""))
-
         if not mensagem or not numero:
             print(f"Sem mensagem/número.")
             return jsonify({"status": "ok"})
-
         print(f"Mensagem de {numero}: {mensagem}")
         dados = carregar_dados(mensagem)
         resposta = consultar_claude(mensagem, dados)
         print(f"Resposta: {resposta[:100]}")
         enviar_mensagem_whatsapp(numero, resposta)
         return jsonify({"status": "ok"})
-
     except Exception as e:
         print(f"Erro: {e}")
         import traceback
