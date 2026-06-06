@@ -28,8 +28,8 @@ def carregar_planilha():
         resp.raise_for_status()
         df = pd.read_csv(io.StringIO(resp.text))
         df = df.dropna(how="all")
-        df = df.head(300)
-        return df.to_string(index=False, max_rows=300)
+        df = df.head(100)
+        return df.to_string(index=False, max_rows=100)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
 
