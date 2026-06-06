@@ -23,7 +23,7 @@ GOOGLE_SHEET_GID = "306020472"
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
 def carregar_planilha_completa():
-    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid={GOOGLE_SHEET_GID}"
+    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid=GOOGLE_SHEET_GID = "1509870099"
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
     df = pd.read_csv(io.StringIO(resp.text))
