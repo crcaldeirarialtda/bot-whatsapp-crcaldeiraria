@@ -23,7 +23,7 @@ client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
 def carregar_planilha():
     try:
-        url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid=993531814"
+        url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid=1376500302"
         resp = requests.get(url, timeout=15)
         resp.raise_for_status()
         df = pd.read_csv(io.StringIO(resp.text))
@@ -32,8 +32,8 @@ def carregar_planilha():
             if col in df.columns:
                 df = df[~df[col].astype(str).str.contains("Expedido|EXPEDIDO|expedido", na=False)]
                 break
-        df = df.head(100)
-        return df.to_string(index=False, max_rows=100)
+        df = df.head(1500)
+        return df.to_string(index=False, max_rows=1500)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
 
