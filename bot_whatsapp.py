@@ -85,7 +85,7 @@ def filtrar_dados(df, pergunta):
         df_filtrado = df.head(100)
     if encontrou and len(numeros) == 0 and not mes and len(df_filtrado) > 200:
         df_filtrado = df_filtrado.head(200)
-    return df_filtrado
+    return df_filtrado, len(numeros) > 0
 
 def carregar_dados(pergunta):
     try:
@@ -94,15 +94,17 @@ def carregar_dados(pergunta):
             if col in df.columns:
                 df = df[~df[col].astype(str).str.contains("Expedido|EXPEDIDO|expedido", na=False)]
                 break
-        df_filtrado = filtrar_dados(df, pergunta)
-        # Agrupa por pedido para evitar repetição
-        col_pedido = None
-        for col in df_filtrado.columns:
-            if "pedido" in col.lower():
-                col_pedido = col
-                break
-        if col_pedido:
-            df_filtrado = df_filtrado.drop_duplicates(subset=[col_pedido])
+        df_filtrado, busca_especifica = filtrar_dados(df, pergunta)
+        # Só agrupa por pedido em buscas amplas (cliente/data)
+        # Em buscas específicas (número), mostra todas as peças
+        if not busca_especifica:
+            col_pedido = None
+            for col in df_filtrado.columns:
+                if "pedido" in col.lower():
+                    col_pedido = col
+                    break
+            if col_pedido:
+                df_filtrado = df_filtrado.drop_duplicates(subset=[col_pedido])
         return df_filtrado.to_string(index=False)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
@@ -124,10 +126,11 @@ def consultar_claude(pergunta, dados_planilha):
 Abaixo estão os dados de produção da empresa.
 Responda de forma clara e objetiva em português.
 REGRAS IMPORTANTES:
-- Agrupe itens do mesmo pedido (não repita o mesmo número de pedido)
-- Liste apenas: Pedido, Descrição resumida, Vencimento, Status
-- Seja conciso — máximo 10 itens por resposta
-- Se houver mais de 10, informe quantos há no total e liste os mais urgentes
+- Quando for busca por pedido específico, liste TODAS as peças desse pedido
+- Quando for busca ampla (cliente/data), agrupe por pedido e não repita o mesmo número
+- Liste: Pedido, Peça/Descrição, Quantidade, Vencimento, Status
+- Seja conciso — máximo 15 itens por resposta
+- Se houver mais de 15, informe quantos há no total e liste os mais urgentes
 - Se a informação não estiver nos dados, diga que não encontrou
 
 DADOS DA PLANILHA:
