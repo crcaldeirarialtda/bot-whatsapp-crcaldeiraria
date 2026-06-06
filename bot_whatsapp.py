@@ -2,7 +2,6 @@
 Bot WhatsApp - CR Caldeiraria
 Responde perguntas sobre a planilha de Acompanhamento e Controle da Produção
 """
-
 from flask import Flask, request, jsonify
 import anthropic
 import pandas as pd
@@ -11,18 +10,14 @@ import json
 import os
 import io
 import re
-
 app = Flask(__name__)
-
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
 EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4a033c"
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
 GOOGLE_SHEET_ID = "10-DezJakw5Qn7zZdC30mWqejZq7F3_vpV4Qg9qbmKFo"
 GOOGLE_SHEET_GID = "1376500302"
-
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-
 def carregar_planilha_completa():
     url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid={GOOGLE_SHEET_GID}"
     resp = requests.get(url, timeout=15)
@@ -30,12 +25,12 @@ def carregar_planilha_completa():
     df = pd.read_csv(io.StringIO(resp.text))
     df = df.dropna(how="all")
     return df
-
 def filtrar_dados(df, pergunta):
     pergunta_upper = pergunta.upper()
     palavras = re.findall(r'\b[A-Z0-9]{3,}\b', pergunta_upper)
     df_filtrado = pd.DataFrame()
     colunas_texto = [c for c in df.columns if df[c].dtype == object]
+    encontrou = False
     for palavra in palavras:
         if len(palavra) < 3:
             continue
@@ -43,10 +38,12 @@ def filtrar_dados(df, pergunta):
             mask = df[col].astype(str).str.upper().str.contains(palavra, na=False)
             if mask.any():
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
-    if df_filtrado.empty:
+                encontrou = True
+    if not encontrou:
         df_filtrado = df.head(80)
-    return df_filtrado.head(150)
-
+    if len(df_filtrado) > 200:
+        df_filtrado = df_filtrado.head(200)
+    return df_filtrado
 def carregar_dados(pergunta):
     try:
         df = carregar_planilha_completa()
@@ -58,7 +55,6 @@ def carregar_dados(pergunta):
         return df_filtrado.to_string(index=False)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
-
 def enviar_mensagem_whatsapp(numero, mensagem):
     url = f"{EVOLUTION_API_URL}/message/sendText/{EVOLUTION_INSTANCE}"
     headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
@@ -70,16 +66,13 @@ def enviar_mensagem_whatsapp(numero, mensagem):
     except Exception as e:
         print(f"Erro ao enviar mensagem: {e}")
         return False
-
 def consultar_claude(pergunta, dados_planilha):
     prompt = f"""Você é um assistente da empresa CR Caldeiraria.
 Abaixo estão os dados de acompanhamento e controle da produção da empresa.
 Responda a pergunta do usuário de forma clara e objetiva em português.
 Se a informação não estiver nos dados, diga que não encontrou.
-
 DADOS DA PLANILHA:
 {dados_planilha}
-
 PERGUNTA DO USUÁRIO:
 {pergunta}"""
     resposta = client.messages.create(
@@ -88,17 +81,14 @@ PERGUNTA DO USUÁRIO:
         messages=[{"role": "user", "content": prompt}]
     )
     return resposta.content[0].text
-
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         data = request.json
         print(f"Webhook recebido: {json.dumps(data)[:300]}")
-
         mensagem = None
         numero = None
         from_me = False
-
         if "query" in data and "inputs" in data:
             inputs = data.get("inputs", {})
             from_me = inputs.get("fromMe", False)
@@ -112,7 +102,6 @@ def webhook():
             resposta = consultar_claude(mensagem, dados)
             print(f"Resposta: {resposta[:100]}")
             return jsonify({"output": resposta})
-
         if "event" in data and data.get("event") == "messages.upsert":
             d = data.get("data", {})
             from_me = d.get("key", {}).get("fromMe", False)
@@ -131,28 +120,23 @@ def webhook():
             msg = d.get("message", {})
             mensagem = (msg.get("conversation") or
                        msg.get("extendedTextMessage", {}).get("text", ""))
-
         if not mensagem or not numero:
             print(f"Sem mensagem/número.")
             return jsonify({"status": "ok"})
-
         print(f"Mensagem de {numero}: {mensagem}")
         dados = carregar_dados(mensagem)
         resposta = consultar_claude(mensagem, dados)
         print(f"Resposta: {resposta[:100]}")
         enviar_mensagem_whatsapp(numero, resposta)
         return jsonify({"status": "ok"})
-
     except Exception as e:
         print(f"Erro: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
-
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({"status": "Bot CR Caldeiraria rodando!"})
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"Bot iniciando na porta {port}...")
