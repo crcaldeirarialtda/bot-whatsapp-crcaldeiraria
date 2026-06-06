@@ -28,6 +28,10 @@ def carregar_planilha():
         resp.raise_for_status()
         df = pd.read_csv(io.StringIO(resp.text))
         df = df.dropna(how="all")
+        for col in ["Status", "STATUS", "status"]:
+            if col in df.columns:
+                df = df[~df[col].astype(str).str.contains("Expedido|EXPEDIDO|expedido", na=False)]
+                break
         df = df.head(100)
         return df.to_string(index=False, max_rows=100)
     except Exception as e:
@@ -58,7 +62,7 @@ PERGUNTA DO USUÁRIO:
 {pergunta}"""
     resposta = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=1000,
+        max_tokens=500,
         messages=[{"role": "user", "content": prompt}]
     )
     return resposta.content[0].text
