@@ -56,26 +56,16 @@ def filtrar_dados(df, pergunta):
     colunas_texto = [c for c in df.columns if df[c].dtype == object]
     encontrou = False
 
-    # 1. Busca por OC específica (prioridade máxima - retorna TODAS as linhas)
-    oc_match = re.search(r'OC[.\s]*(\d{5,})', pergunta_upper)
-    if oc_match:
-        numero_oc = oc_match.group(1)
-        for col in colunas_texto:
-            mask = df[col].astype(str).str.contains(numero_oc, na=False)
-            if mask.any():
-                return df[mask]
-
-    # 2. Busca por número de pedido longo
-    pedido_match = re.search(r'\b(\d{7,})\b', pergunta)
-    if pedido_match:
-        numero = pedido_match.group(1)
-        for col in colunas_texto:
+    # 1. Busca por número específico (OC, pedido) - sem limite de linhas
+    numeros = re.findall(r'\b(\d{5,})\b', pergunta)
+    for numero in numeros:
+        for col in df.columns:
             mask = df[col].astype(str).str.contains(numero, na=False)
             if mask.any():
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
                 encontrou = True
 
-    # 3. Filtro por data de vencimento
+    # 2. Filtro por data de vencimento
     col_vencimento = None
     for col in df.columns:
         if "vencimento" in col.lower():
@@ -89,7 +79,7 @@ def filtrar_dados(df, pergunta):
             df_filtrado = pd.concat([df_filtrado, df[mask_data]]).drop_duplicates()
             encontrou = True
 
-    # 4. Filtro por nome de cliente (palavras com 4+ letras)
+    # 3. Filtro por nome de cliente
     palavras = re.findall(r'\b[A-Z]{4,}\b', pergunta_upper)
     for palavra in palavras:
         for col in colunas_texto:
@@ -98,12 +88,14 @@ def filtrar_dados(df, pergunta):
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
                 encontrou = True
 
+    # Sem resultado específico: retorna primeiras 100 linhas
     if not encontrou:
         df_filtrado = df.head(100)
 
-   if not encontrou and len(df_filtrado) > 100:
-        df_filtrado = df_filtrado.head(100)
-       
+    # Limita apenas buscas genéricas (cliente) para não exceder tokens
+    if encontrou and len(numeros) == 0 and not mes and len(df_filtrado) > 200:
+        df_filtrado = df_filtrado.head(200)
+
     return df_filtrado
 
 def carregar_dados(pergunta):
