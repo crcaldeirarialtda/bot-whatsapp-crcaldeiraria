@@ -95,6 +95,14 @@ def carregar_dados(pergunta):
                 df = df[~df[col].astype(str).str.contains("Expedido|EXPEDIDO|expedido", na=False)]
                 break
         df_filtrado = filtrar_dados(df, pergunta)
+        # Agrupa por pedido para evitar repetição
+        col_pedido = None
+        for col in df_filtrado.columns:
+            if "pedido" in col.lower():
+                col_pedido = col
+                break
+        if col_pedido:
+            df_filtrado = df_filtrado.drop_duplicates(subset=[col_pedido])
         return df_filtrado.to_string(index=False)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
