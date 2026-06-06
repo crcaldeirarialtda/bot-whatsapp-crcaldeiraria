@@ -19,7 +19,7 @@ EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
 EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4a033c"
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
 GOOGLE_SHEET_ID = "10-DezJakw5Qn7zZdC30mWqejZq7F3_vpV4Qg9qbmKFo"
-GOOGLE_SHEET_GID = "993531814"
+GOOGLE_SHEET_GID = "1376500302"
 
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
