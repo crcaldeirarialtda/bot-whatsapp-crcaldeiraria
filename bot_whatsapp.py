@@ -9,6 +9,7 @@ import pandas as pd
 import requests
 import json
 import os
+import io
 
 app = Flask(__name__)
 
@@ -16,19 +17,19 @@ CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
 EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4a033c"
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
-CAMINHO_PLANILHA = "planilha.xlsx"
+GOOGLE_SHEET_ID = "10-DezJakw5Qn7zZdC30mWqejZq7F3_vpV4Qg9qbmKFo"
 
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
 def carregar_planilha():
     try:
-        df = pd.read_excel(CAMINHO_PLANILHA, sheet_name="STATUS DE FABRICAÇÃO", skiprows=5, nrows=500)
+        url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid=0"
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text))
         df = df.dropna(how="all")
-        colunas = ["Cliente", "Pedido", "OP", "Descrição", "Quantidade TOTAL",
-                   "Data da necessidade", "STATUS", "STATUS ENTREGA", "OBSERVAÇÕES"]
-        colunas_existentes = [c for c in colunas if c in df.columns]
-        df_resumo = df[colunas_existentes].dropna(subset=["Cliente"])
-        return df_resumo.to_string(index=False, max_rows=500)
+        df = df.head(300)
+        return df.to_string(index=False, max_rows=300)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
 
@@ -37,7 +38,7 @@ def enviar_mensagem_whatsapp(numero, mensagem):
     headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
     payload = {"number": numero, "text": mensagem}
     try:
-        resp = requests.post(url, headers=headers, json=payload)
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
         print(f"Envio status: {resp.status_code}")
         return resp.status_code == 200
     except Exception as e:
