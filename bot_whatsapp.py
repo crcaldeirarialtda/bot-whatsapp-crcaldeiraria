@@ -91,7 +91,7 @@ def filtrar_dados(df, pergunta):
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
                 encontrou = True
 
-    # Filtro por data (refina se já encontrou, ou busca sozinho)
+    # Filtro por data (refina o resultado se já encontrou, ou busca sozinho)
     if col_vencimento and mes:
         df[col_vencimento] = pd.to_datetime(df[col_vencimento], errors="coerce", dayfirst=True)
         mask_data = (df[col_vencimento].dt.month == int(mes)) & (df[col_vencimento].dt.year == int(ano))
@@ -301,6 +301,22 @@ def webhook():
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({"status": "Bot CR Caldeiraria rodando!"})
+
+@app.route("/debug", methods=["GET"])
+def debug():
+    try:
+        df = carregar_planilha_completa()
+        clientes = df["Cliente"].dropna().unique().tolist() if "Cliente" in df.columns else []
+        voith_rows = df[df["Cliente"].astype(str).str.upper().str.contains("VOITH", na=False)] if "Cliente" in df.columns else pd.DataFrame()
+        return jsonify({
+            "total_linhas": len(df),
+            "colunas": df.columns.tolist(),
+            "primeiros_clientes": clientes[:20],
+            "voith_encontrado": len(voith_rows),
+            "primeiras_linhas": df.head(3).to_dict(orient="records")
+        })
+    except Exception as e:
+        return jsonify({"erro": str(e)})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
