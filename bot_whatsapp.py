@@ -24,8 +24,6 @@ APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyGVTZz5IxHUHadZEQu49
 
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
-# ─── PLANILHA ──────────────────────────────────────────────────────────────────
-
 def carregar_planilha_completa():
     url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&sheet={GOOGLE_SHEET_NAME}"
     resp = requests.get(url, timeout=15)
@@ -83,7 +81,6 @@ def filtrar_dados(df, pergunta):
 
     mes, ano = extrair_mes_ano(pergunta)
 
-    # Filtro por palavra-chave PRIMEIRO (cliente, pedido, OC, peça)
     for palavra in palavras:
         for col in colunas_texto:
             mask = df[col].astype(str).str.upper().str.contains(palavra, na=False)
@@ -91,7 +88,6 @@ def filtrar_dados(df, pergunta):
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
                 encontrou = True
 
-    # Filtro por data (refina o resultado se já encontrou, ou busca sozinho)
     if col_vencimento and mes:
         df[col_vencimento] = pd.to_datetime(df[col_vencimento], errors="coerce", dayfirst=True)
         mask_data = (df[col_vencimento].dt.month == int(mes)) & (df[col_vencimento].dt.year == int(ano))
@@ -125,8 +121,6 @@ def carregar_dados(pergunta):
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
 
-# ─── DESENHOS PDF ──────────────────────────────────────────────────────────────
-
 def detectar_pedido_desenho(pergunta):
     palavras_desenho = ["desenho", "pdf", "planta", "dwg", "arquivo", "documento",
                         "me manda", "me envia", "me envie", "quero ver", "ver o"]
@@ -153,7 +147,6 @@ def buscar_pdf_drive(codigo_peca):
         if resultado.get("found"):
             print(f"PDF encontrado: {resultado['name']}")
             return resultado["fileId"], resultado["name"]
-        print(f"Nenhum PDF encontrado para: {codigo_peca}")
         return None, None
     except Exception as e:
         print(f"Erro ao buscar PDF no Drive: {e}")
@@ -194,8 +187,6 @@ def processar_pedido_desenho(numero, mensagem):
         enviar_mensagem_whatsapp(numero, f"❌ Não encontrei desenho para o código *{codigo}*. Verifique se o código está correto.")
     return True
 
-# ─── WHATSAPP ──────────────────────────────────────────────────────────────────
-
 def enviar_mensagem_whatsapp(numero, mensagem):
     url = f"{EVOLUTION_API_URL}/message/sendText/{EVOLUTION_INSTANCE}"
     headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
@@ -230,8 +221,6 @@ PERGUNTA: {pergunta}"""
             return "⚠️ Muitas consultas ao mesmo tempo. Aguarde 1 minuto e tente novamente."
         return f"Erro ao consultar: {erro[:100]}"
 
-# ─── WEBHOOK ───────────────────────────────────────────────────────────────────
-
 def processar_mensagem(numero, mensagem):
     if detectar_pedido_desenho(mensagem):
         processar_pedido_desenho(numero, mensagem)
@@ -258,7 +247,6 @@ def webhook():
             mensagem = data.get("query", "")
             if not mensagem:
                 return jsonify({"output": ""})
-            print(f"Mensagem: {mensagem}")
             if detectar_pedido_desenho(mensagem):
                 return jsonify({"output": "Para receber o desenho, envie o código diretamente no WhatsApp."})
             dados = carregar_dados(mensagem)
@@ -317,6 +305,40 @@ def debug():
         })
     except Exception as e:
         return jsonify({"erro": str(e)})
+
+@app.route("/test-voith", methods=["GET"])
+def test_voith():
+    try:
+        pergunta = "Voith"
+        df = carregar_planilha_completa()
+        total_bruto = len(df)
+        for col in ["Status", "STATUS", "status"]:
+            if col in df.columns:
+                df = df[~df[col].astype(str).str.contains("Expedido|EXPEDIDO|expedido", na=False)]
+                break
+        total_apos_filtro = len(df)
+        tipos = {c: str(df[c].dtype) for c in df.columns}
+        colunas_texto = [c for c in df.columns if df[c].dtype == object]
+        busca = {}
+        for col in colunas_texto:
+            mask = df[col].astype(str).str.upper().str.contains("VOITH", na=False)
+            busca[col] = int(mask.sum())
+        palavras = re.findall(r'\b[A-Z0-9]{3,}\b', pergunta.upper())
+        palavras_filtradas = [p for p in palavras if p not in STOPWORDS and len(p) >= 3]
+        dados = carregar_dados(pergunta)
+        return jsonify({
+            "total_bruto": total_bruto,
+            "total_apos_filtro_expedido": total_apos_filtro,
+            "tipos_colunas": tipos,
+            "colunas_texto": colunas_texto,
+            "busca_voith_por_coluna": busca,
+            "palavras_extraidas": palavras,
+            "palavras_apos_stopwords": palavras_filtradas,
+            "primeiros_200_chars_resultado": dados[:200]
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"erro": str(e), "trace": traceback.format_exc()})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
