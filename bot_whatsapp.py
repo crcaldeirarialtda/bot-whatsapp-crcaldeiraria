@@ -19,7 +19,7 @@ EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
 EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4a033c"
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
 GOOGLE_SHEET_ID = "10-DezJakw5Qn7zZdC30mWqejZq7F3_vpV4Qg9qbmKFo"
-GOOGLE_SHEET_GID = "1224354460"
+GOOGLE_SHEET_NAME = "Producao"
 APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyGVTZz5IxHUHadZEQu49_iAsv6ztPZ_u1wbtR1Wj9o6C-zcStPEWtLBhTGcKmTBkpc/exec"
 
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
@@ -27,7 +27,7 @@ client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 # ─── PLANILHA ──────────────────────────────────────────────────────────────────
 
 def carregar_planilha_completa():
-    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid={GOOGLE_SHEET_GID}"
+    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&sheet={GOOGLE_SHEET_NAME}"
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
     df = pd.read_csv(io.StringIO(resp.text))
@@ -87,10 +87,10 @@ def filtrar_dados(df, pergunta):
                 encontrou = True
 
     if not encontrou:
-        df_filtrado = df.head(500)
+        df_filtrado = df.head(50)
 
-    if len(df_filtrado) > 200:
-        df_filtrado = df_filtrado.head(200)
+    if len(df_filtrado) > 80:
+        df_filtrado = df_filtrado.head(80)
 
     return df_filtrado
 
@@ -109,18 +109,15 @@ def carregar_dados(pergunta):
 # ─── DESENHOS PDF ──────────────────────────────────────────────────────────────
 
 def detectar_pedido_desenho(pergunta):
-    """Detecta se o usuário está pedindo um desenho/PDF. Retorna True/False."""
     palavras_desenho = ["desenho", "pdf", "planta", "dwg", "arquivo", "documento",
                         "me manda", "me envia", "me envie", "quero ver", "ver o"]
     pergunta_lower = pergunta.lower()
     return any(p in pergunta_lower for p in palavras_desenho)
 
 def extrair_codigo_peca(pergunta):
-    """Extrai possíveis códigos de peça da mensagem do usuário."""
-    # Padrões típicos: GR1G083213-00, PTP3A2316_GRADE_R0000, 05I15100MKB15-262FTU-01
     padroes = [
-        r'\b[A-Z0-9]{3,}[-_][A-Z0-9]+(?:[-_][A-Z0-9]+)*\b',  # com hífen ou underscore
-        r'\b[A-Z]{2,}[0-9]{4,}[A-Z0-9-]*\b',                   # letras seguidas de números
+        r'\b[A-Z0-9]{3,}[-_][A-Z0-9]+(?:[-_][A-Z0-9]+)*\b',
+        r'\b[A-Z]{2,}[0-9]{4,}[A-Z0-9-]*\b',
     ]
     pergunta_upper = pergunta.upper()
     for padrao in padroes:
@@ -130,7 +127,6 @@ def extrair_codigo_peca(pergunta):
     return None
 
 def buscar_pdf_drive(codigo_peca):
-    """Busca PDF no Google Drive via Apps Script. Retorna (file_id, nome) ou (None, None)."""
     try:
         resp = requests.get(APPS_SCRIPT_URL, params={"codigo": codigo_peca}, timeout=15)
         resp.raise_for_status()
@@ -145,7 +141,6 @@ def buscar_pdf_drive(codigo_peca):
         return None, None
 
 def enviar_pdf_whatsapp(numero, file_id, nome_arquivo):
-    """Envia PDF via Evolution API usando o ID do arquivo no Google Drive."""
     url_pdf = f"https://drive.google.com/uc?export=download&id={file_id}"
     url = f"{EVOLUTION_API_URL}/message/sendMedia/{EVOLUTION_INSTANCE}"
     headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
@@ -165,15 +160,12 @@ def enviar_pdf_whatsapp(numero, file_id, nome_arquivo):
         return False
 
 def processar_pedido_desenho(numero, mensagem):
-    """Processa pedido de desenho: busca PDF e envia. Retorna True se enviou."""
     codigo = extrair_codigo_peca(mensagem)
     if not codigo:
         enviar_mensagem_whatsapp(numero, "⚠️ Não consegui identificar o código da peça. Envie o código completo, por exemplo: *GR1G083213-00*")
         return True
-
     print(f"Buscando PDF para código: {codigo}")
     file_id, nome = buscar_pdf_drive(codigo)
-
     if file_id:
         enviar_mensagem_whatsapp(numero, f"📄 Encontrei o desenho *{nome}*. Enviando...")
         sucesso = enviar_pdf_whatsapp(numero, file_id, nome)
@@ -198,28 +190,30 @@ def enviar_mensagem_whatsapp(numero, mensagem):
         return False
 
 def consultar_claude(pergunta, dados_planilha):
-    prompt = f"""Você é um assistente da empresa CR Caldeiraria.
-Abaixo estão os dados de acompanhamento e controle da produção da empresa.
-Responda a pergunta do usuário de forma clara e objetiva em português.
+    dados_truncados = dados_planilha[:6000] if len(dados_planilha) > 6000 else dados_planilha
+    prompt = f"""Você é um assistente da CR Caldeiraria. Responda em português, de forma clara e curta.
 Se a informação não estiver nos dados, diga que não encontrou.
 
-DADOS DA PLANILHA:
-{dados_planilha}
+DADOS:
+{dados_truncados}
 
-PERGUNTA DO USUÁRIO:
-{pergunta}"""
-    resposta = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return resposta.content[0].text
+PERGUNTA: {pergunta}"""
+    try:
+        resposta = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return resposta.content[0].text
+    except Exception as e:
+        erro = str(e)
+        if "rate_limit" in erro or "429" in erro:
+            return "⚠️ Muitas consultas ao mesmo tempo. Aguarde 1 minuto e tente novamente."
+        return f"Erro ao consultar: {erro[:100]}"
 
 # ─── WEBHOOK ───────────────────────────────────────────────────────────────────
 
 def processar_mensagem(numero, mensagem):
-    """Lógica principal: decide se responde com planilha ou envia PDF."""
-    # Verifica se é pedido de desenho
     if detectar_pedido_desenho(mensagem):
         processar_pedido_desenho(numero, mensagem)
     else:
@@ -237,7 +231,6 @@ def webhook():
         numero = None
         from_me = False
 
-        # Formato Evolution Bot (query + inputs)
         if "query" in data and "inputs" in data:
             inputs = data.get("inputs", {})
             from_me = inputs.get("fromMe", False)
@@ -248,13 +241,11 @@ def webhook():
                 return jsonify({"output": ""})
             print(f"Mensagem: {mensagem}")
             if detectar_pedido_desenho(mensagem):
-                # Sem número neste formato, retorna texto informando
                 return jsonify({"output": "Para receber o desenho, envie o código diretamente no WhatsApp."})
             dados = carregar_dados(mensagem)
             resposta = consultar_claude(mensagem, dados)
             return jsonify({"output": resposta})
 
-        # Formato MESSAGES_UPSERT
         if "event" in data and data.get("event") == "messages.upsert":
             d = data.get("data", {})
             from_me = d.get("key", {}).get("fromMe", False)
