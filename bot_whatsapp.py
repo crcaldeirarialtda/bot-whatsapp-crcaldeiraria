@@ -1,6 +1,7 @@
 """
 Bot WhatsApp - CR Caldeiraria
 Responde perguntas sobre a planilha de Acompanhamento e Controle da Produção
+Suporte a envio de desenhos em PDF via Google Drive
 """
 from flask import Flask, request, jsonify
 import anthropic
@@ -11,14 +12,19 @@ import os
 import io
 import re
 from datetime import datetime
+
 app = Flask(__name__)
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 EVOLUTION_API_URL = "https://evolution-api-production-02e0.up.railway.app"
 EVOLUTION_API_KEY = "ed3c5b11b073e0167bebf4fa37e2989a57828b2ae284d6bc45f0ee859b4a033c"
 EVOLUTION_INSTANCE = "CRCALDEIRARIA"
 GOOGLE_SHEET_ID = "10-DezJakw5Qn7zZdC30mWqejZq7F3_vpV4Qg9qbmKFo"
-GOOGLE_SHEET_GID = "805048859"
+GOOGLE_SHEET_GID = "1543725428"
+APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyGVTZz5IxHUHadZEQu49_iAsv6ztPZ_u1wbtR1Wj9o6C-zcStPEWtLBhTGcKmTBkpc/exec"
+
 client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+
+# ─── PLANILHA ──────────────────────────────────────────────────────────────────
 
 def carregar_planilha_completa():
     url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid={GOOGLE_SHEET_GID}"
@@ -52,21 +58,17 @@ def extrair_mes_ano(pergunta):
 
 def filtrar_dados(df, pergunta):
     pergunta_upper = pergunta.upper()
+    palavras = re.findall(r'\b[A-Z0-9]{3,}\b', pergunta_upper)
     df_filtrado = pd.DataFrame()
     colunas_texto = [c for c in df.columns if df[c].dtype == object]
     encontrou = False
-    numeros = re.findall(r'\b(\d{5,})\b', pergunta)
-    for numero in numeros:
-        for col in df.columns:
-            mask = df[col].astype(str).str.contains(numero, na=False)
-            if mask.any():
-                df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
-                encontrou = True
+
     col_vencimento = None
     for col in df.columns:
-        if "vencimento" in col.lower():
+        if "vencimento" in col.lower() or "venc" in col.lower():
             col_vencimento = col
             break
+
     mes, ano = extrair_mes_ano(pergunta)
     if col_vencimento and mes:
         df[col_vencimento] = pd.to_datetime(df[col_vencimento], errors="coerce", dayfirst=True)
@@ -74,18 +76,23 @@ def filtrar_dados(df, pergunta):
         if mask_data.any():
             df_filtrado = pd.concat([df_filtrado, df[mask_data]]).drop_duplicates()
             encontrou = True
-    palavras = re.findall(r'\b[A-Z]{4,}\b', pergunta_upper)
+
     for palavra in palavras:
+        if len(palavra) < 3:
+            continue
         for col in colunas_texto:
             mask = df[col].astype(str).str.upper().str.contains(palavra, na=False)
             if mask.any():
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
                 encontrou = True
+
     if not encontrou:
-        df_filtrado = df.head(100)
-    if encontrou and len(numeros) == 0 and not mes and len(df_filtrado) > 200:
+        df_filtrado = df.head(500)
+
+    if len(df_filtrado) > 200:
         df_filtrado = df_filtrado.head(200)
-    return df_filtrado, len(numeros) > 0
+
+    return df_filtrado
 
 def carregar_dados(pergunta):
     try:
@@ -94,20 +101,89 @@ def carregar_dados(pergunta):
             if col in df.columns:
                 df = df[~df[col].astype(str).str.contains("Expedido|EXPEDIDO|expedido", na=False)]
                 break
-        df_filtrado, busca_especifica = filtrar_dados(df, pergunta)
-        # Só agrupa por pedido em buscas amplas (cliente/data)
-        # Em buscas específicas (número), mostra todas as peças
-        if not busca_especifica:
-            col_pedido = None
-            for col in df_filtrado.columns:
-                if "pedido" in col.lower():
-                    col_pedido = col
-                    break
-            if col_pedido:
-                df_filtrado = df_filtrado.drop_duplicates(subset=[col_pedido])
+        df_filtrado = filtrar_dados(df, pergunta)
         return df_filtrado.to_string(index=False)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
+
+# ─── DESENHOS PDF ──────────────────────────────────────────────────────────────
+
+def detectar_pedido_desenho(pergunta):
+    """Detecta se o usuário está pedindo um desenho/PDF. Retorna True/False."""
+    palavras_desenho = ["desenho", "pdf", "planta", "dwg", "arquivo", "documento",
+                        "me manda", "me envia", "me envie", "quero ver", "ver o"]
+    pergunta_lower = pergunta.lower()
+    return any(p in pergunta_lower for p in palavras_desenho)
+
+def extrair_codigo_peca(pergunta):
+    """Extrai possíveis códigos de peça da mensagem do usuário."""
+    # Padrões típicos: GR1G083213-00, PTP3A2316_GRADE_R0000, 05I15100MKB15-262FTU-01
+    padroes = [
+        r'\b[A-Z0-9]{3,}[-_][A-Z0-9]+(?:[-_][A-Z0-9]+)*\b',  # com hífen ou underscore
+        r'\b[A-Z]{2,}[0-9]{4,}[A-Z0-9-]*\b',                   # letras seguidas de números
+    ]
+    pergunta_upper = pergunta.upper()
+    for padrao in padroes:
+        matches = re.findall(padrao, pergunta_upper)
+        if matches:
+            return matches[0]
+    return None
+
+def buscar_pdf_drive(codigo_peca):
+    """Busca PDF no Google Drive via Apps Script. Retorna (file_id, nome) ou (None, None)."""
+    try:
+        resp = requests.get(APPS_SCRIPT_URL, params={"codigo": codigo_peca}, timeout=15)
+        resp.raise_for_status()
+        resultado = resp.json()
+        if resultado.get("found"):
+            print(f"PDF encontrado: {resultado['name']}")
+            return resultado["fileId"], resultado["name"]
+        print(f"Nenhum PDF encontrado para: {codigo_peca}")
+        return None, None
+    except Exception as e:
+        print(f"Erro ao buscar PDF no Drive: {e}")
+        return None, None
+
+def enviar_pdf_whatsapp(numero, file_id, nome_arquivo):
+    """Envia PDF via Evolution API usando o ID do arquivo no Google Drive."""
+    url_pdf = f"https://drive.google.com/uc?export=download&id={file_id}"
+    url = f"{EVOLUTION_API_URL}/message/sendMedia/{EVOLUTION_INSTANCE}"
+    headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
+    payload = {
+        "number": numero,
+        "mediatype": "document",
+        "media": url_pdf,
+        "fileName": nome_arquivo,
+        "caption": f"Desenho: {nome_arquivo}"
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+        print(f"Envio PDF status: {resp.status_code} - {resp.text[:200]}")
+        return resp.status_code in [200, 201]
+    except Exception as e:
+        print(f"Erro ao enviar PDF: {e}")
+        return False
+
+def processar_pedido_desenho(numero, mensagem):
+    """Processa pedido de desenho: busca PDF e envia. Retorna True se enviou."""
+    codigo = extrair_codigo_peca(mensagem)
+    if not codigo:
+        enviar_mensagem_whatsapp(numero, "⚠️ Não consegui identificar o código da peça. Envie o código completo, por exemplo: *GR1G083213-00*")
+        return True
+
+    print(f"Buscando PDF para código: {codigo}")
+    file_id, nome = buscar_pdf_drive(codigo)
+
+    if file_id:
+        enviar_mensagem_whatsapp(numero, f"📄 Encontrei o desenho *{nome}*. Enviando...")
+        sucesso = enviar_pdf_whatsapp(numero, file_id, nome)
+        if not sucesso:
+            enviar_mensagem_whatsapp(numero, "❌ Erro ao enviar o arquivo. Tente novamente.")
+    else:
+        enviar_mensagem_whatsapp(numero, f"❌ Não encontrei desenho para o código *{codigo}*. Verifique se o código está correto.")
+    return True
+
+# ─── WHATSAPP ──────────────────────────────────────────────────────────────────
 
 def enviar_mensagem_whatsapp(numero, mensagem):
     url = f"{EVOLUTION_API_URL}/message/sendText/{EVOLUTION_INSTANCE}"
@@ -123,15 +199,9 @@ def enviar_mensagem_whatsapp(numero, mensagem):
 
 def consultar_claude(pergunta, dados_planilha):
     prompt = f"""Você é um assistente da empresa CR Caldeiraria.
-Abaixo estão os dados de produção da empresa.
-Responda de forma clara e objetiva em português.
-REGRAS IMPORTANTES:
-- Quando for busca por pedido específico, liste TODAS as peças desse pedido
-- Quando for busca ampla (cliente/data), agrupe por pedido e não repita o mesmo número
-- Liste: Pedido, Peça/Descrição, Quantidade, Vencimento, Status
-- Seja conciso — máximo 15 itens por resposta
-- Se houver mais de 15, informe quantos há no total e liste os mais urgentes
-- Se a informação não estiver nos dados, diga que não encontrou
+Abaixo estão os dados de acompanhamento e controle da produção da empresa.
+Responda a pergunta do usuário de forma clara e objetiva em português.
+Se a informação não estiver nos dados, diga que não encontrou.
 
 DADOS DA PLANILHA:
 {dados_planilha}
@@ -140,10 +210,23 @@ PERGUNTA DO USUÁRIO:
 {pergunta}"""
     resposta = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=800,
+        max_tokens=500,
         messages=[{"role": "user", "content": prompt}]
     )
     return resposta.content[0].text
+
+# ─── WEBHOOK ───────────────────────────────────────────────────────────────────
+
+def processar_mensagem(numero, mensagem):
+    """Lógica principal: decide se responde com planilha ou envia PDF."""
+    # Verifica se é pedido de desenho
+    if detectar_pedido_desenho(mensagem):
+        processar_pedido_desenho(numero, mensagem)
+    else:
+        dados = carregar_dados(mensagem)
+        resposta = consultar_claude(mensagem, dados)
+        print(f"Resposta: {resposta[:100]}")
+        enviar_mensagem_whatsapp(numero, resposta)
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -153,6 +236,8 @@ def webhook():
         mensagem = None
         numero = None
         from_me = False
+
+        # Formato Evolution Bot (query + inputs)
         if "query" in data and "inputs" in data:
             inputs = data.get("inputs", {})
             from_me = inputs.get("fromMe", False)
@@ -162,10 +247,14 @@ def webhook():
             if not mensagem:
                 return jsonify({"output": ""})
             print(f"Mensagem: {mensagem}")
+            if detectar_pedido_desenho(mensagem):
+                # Sem número neste formato, retorna texto informando
+                return jsonify({"output": "Para receber o desenho, envie o código diretamente no WhatsApp."})
             dados = carregar_dados(mensagem)
             resposta = consultar_claude(mensagem, dados)
-            print(f"Resposta: {resposta[:100]}")
             return jsonify({"output": resposta})
+
+        # Formato MESSAGES_UPSERT
         if "event" in data and data.get("event") == "messages.upsert":
             d = data.get("data", {})
             from_me = d.get("key", {}).get("fromMe", False)
@@ -184,15 +273,15 @@ def webhook():
             msg = d.get("message", {})
             mensagem = (msg.get("conversation") or
                        msg.get("extendedTextMessage", {}).get("text", ""))
+
         if not mensagem or not numero:
-            print(f"Sem mensagem/número.")
+            print("Sem mensagem/número.")
             return jsonify({"status": "ok"})
+
         print(f"Mensagem de {numero}: {mensagem}")
-        dados = carregar_dados(mensagem)
-        resposta = consultar_claude(mensagem, dados)
-        print(f"Resposta: {resposta[:100]}")
-        enviar_mensagem_whatsapp(numero, resposta)
+        processar_mensagem(numero, mensagem)
         return jsonify({"status": "ok"})
+
     except Exception as e:
         print(f"Erro: {e}")
         import traceback
