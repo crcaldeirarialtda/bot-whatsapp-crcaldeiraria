@@ -70,7 +70,7 @@ def filtrar_dados(df, pergunta):
     palavras = [p for p in palavras if p not in STOPWORDS and len(p) >= 3]
 
     df_filtrado = pd.DataFrame()
-    colunas_texto = [c for c in df.columns if df[c].dtype == object]
+    colunas_texto = [c for c in df.columns if str(df[c].dtype) in ('object', 'string', 'str')]
     encontrou = False
 
     col_vencimento = None
@@ -145,7 +145,6 @@ def buscar_pdf_drive(codigo_peca):
         resp.raise_for_status()
         resultado = resp.json()
         if resultado.get("found"):
-            print(f"PDF encontrado: {resultado['name']}")
             return resultado["fileId"], resultado["name"]
         return None, None
     except Exception as e:
@@ -165,7 +164,6 @@ def enviar_pdf_whatsapp(numero, file_id, nome_arquivo):
     }
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
-        print(f"Envio PDF status: {resp.status_code} - {resp.text[:200]}")
         return resp.status_code in [200, 201]
     except Exception as e:
         print(f"Erro ao enviar PDF: {e}")
@@ -176,7 +174,6 @@ def processar_pedido_desenho(numero, mensagem):
     if not codigo:
         enviar_mensagem_whatsapp(numero, "⚠️ Não consegui identificar o código da peça. Envie o código completo, por exemplo: *GR1G083213-00*")
         return True
-    print(f"Buscando PDF para código: {codigo}")
     file_id, nome = buscar_pdf_drive(codigo)
     if file_id:
         enviar_mensagem_whatsapp(numero, f"📄 Encontrei o desenho *{nome}*. Enviando...")
@@ -193,7 +190,6 @@ def enviar_mensagem_whatsapp(numero, mensagem):
     payload = {"number": numero, "text": mensagem}
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
-        print(f"Envio status: {resp.status_code}")
         return resp.status_code == 200
     except Exception as e:
         print(f"Erro ao enviar mensagem: {e}")
@@ -227,7 +223,6 @@ def processar_mensagem(numero, mensagem):
     else:
         dados = carregar_dados(mensagem)
         resposta = consultar_claude(mensagem, dados)
-        print(f"Resposta: {resposta[:100]}")
         enviar_mensagem_whatsapp(numero, resposta)
 
 @app.route("/webhook", methods=["POST"])
@@ -273,7 +268,6 @@ def webhook():
                        msg.get("extendedTextMessage", {}).get("text", ""))
 
         if not mensagem or not numero:
-            print("Sem mensagem/número.")
             return jsonify({"status": "ok"})
 
         print(f"Mensagem de {numero}: {mensagem}")
@@ -301,44 +295,9 @@ def debug():
             "colunas": df.columns.tolist(),
             "primeiros_clientes": clientes[:20],
             "voith_encontrado": len(voith_rows),
-            "primeiras_linhas": df.head(3).to_dict(orient="records")
         })
     except Exception as e:
         return jsonify({"erro": str(e)})
-
-@app.route("/test-voith", methods=["GET"])
-def test_voith():
-    try:
-        pergunta = "Voith"
-        df = carregar_planilha_completa()
-        total_bruto = len(df)
-        for col in ["Status", "STATUS", "status"]:
-            if col in df.columns:
-                df = df[~df[col].astype(str).str.contains("Expedido|EXPEDIDO|expedido", na=False)]
-                break
-        total_apos_filtro = len(df)
-        tipos = {c: str(df[c].dtype) for c in df.columns}
-        colunas_texto = [c for c in df.columns if df[c].dtype == object]
-        busca = {}
-        for col in colunas_texto:
-            mask = df[col].astype(str).str.upper().str.contains("VOITH", na=False)
-            busca[col] = int(mask.sum())
-        palavras = re.findall(r'\b[A-Z0-9]{3,}\b', pergunta.upper())
-        palavras_filtradas = [p for p in palavras if p not in STOPWORDS and len(p) >= 3]
-        dados = carregar_dados(pergunta)
-        return jsonify({
-            "total_bruto": total_bruto,
-            "total_apos_filtro_expedido": total_apos_filtro,
-            "tipos_colunas": tipos,
-            "colunas_texto": colunas_texto,
-            "busca_voith_por_coluna": busca,
-            "palavras_extraidas": palavras,
-            "palavras_apos_stopwords": palavras_filtradas,
-            "primeiros_200_chars_resultado": dados[:200]
-        })
-    except Exception as e:
-        import traceback
-        return jsonify({"erro": str(e), "trace": traceback.format_exc()})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
