@@ -56,9 +56,21 @@ def extrair_mes_ano(pergunta):
     ano = match_ano.group(1) if match_ano else str(datetime.now().year)
     return mes_encontrado, ano
 
+STOPWORDS = {
+    "QUAIS", "QUAL", "TODOS", "TODAS", "PARA", "COM", "SEM", "POR", "NUM", "UMA",
+    "ESTA", "ESTE", "ESSA", "ESSE", "SOBRE", "COMO", "QUANDO", "ONDE", "TEM",
+    "INFORMACOES", "INFORMACAO", "STATUS", "SITUACAO", "VENCE", "VENCIMENTO",
+    "PEDIDO", "PEDIDOS", "CLIENTE", "CLIENTES", "DATA", "PRAZO", "LISTA",
+    "MEU", "MINHA", "VER", "QUERO", "MANDA", "ENVIA", "BUSCA", "BUSCAR",
+    "HAV", "TEVE", "SERA", "SABE", "DIGA", "FALA", "SHOW", "NAO", "SIM",
+    "PRODUCAO", "BOT", "OLA", "BOM", "DIA", "TARDE", "NOITE"
+}
+
 def filtrar_dados(df, pergunta):
     pergunta_upper = pergunta.upper()
     palavras = re.findall(r'\b[A-Z0-9]{3,}\b', pergunta_upper)
+    palavras = [p for p in palavras if p not in STOPWORDS and len(p) >= 3]
+
     df_filtrado = pd.DataFrame()
     colunas_texto = [c for c in df.columns if df[c].dtype == object]
     encontrou = False
@@ -70,27 +82,34 @@ def filtrar_dados(df, pergunta):
             break
 
     mes, ano = extrair_mes_ano(pergunta)
-    if col_vencimento and mes:
-        df[col_vencimento] = pd.to_datetime(df[col_vencimento], errors="coerce", dayfirst=True)
-        mask_data = (df[col_vencimento].dt.month == int(mes)) & (df[col_vencimento].dt.year == int(ano))
-        if mask_data.any():
-            df_filtrado = pd.concat([df_filtrado, df[mask_data]]).drop_duplicates()
-            encontrou = True
 
+    # Filtro por palavra-chave PRIMEIRO (cliente, pedido, OC, peça)
     for palavra in palavras:
-        if len(palavra) < 3:
-            continue
         for col in colunas_texto:
             mask = df[col].astype(str).str.upper().str.contains(palavra, na=False)
             if mask.any():
                 df_filtrado = pd.concat([df_filtrado, df[mask]]).drop_duplicates()
                 encontrou = True
 
+    # Filtro por data (refina se já encontrou, ou busca sozinho)
+    if col_vencimento and mes:
+        df[col_vencimento] = pd.to_datetime(df[col_vencimento], errors="coerce", dayfirst=True)
+        mask_data = (df[col_vencimento].dt.month == int(mes)) & (df[col_vencimento].dt.year == int(ano))
+        if encontrou:
+            df_filtrado[col_vencimento] = pd.to_datetime(df_filtrado[col_vencimento], errors="coerce", dayfirst=True)
+            mask_data2 = (df_filtrado[col_vencimento].dt.month == int(mes)) & (df_filtrado[col_vencimento].dt.year == int(ano))
+            if mask_data2.any():
+                df_filtrado = df_filtrado[mask_data2]
+        else:
+            if mask_data.any():
+                df_filtrado = df[mask_data]
+                encontrou = True
+
     if not encontrou:
         df_filtrado = df.head(50)
 
-    if len(df_filtrado) > 80:
-        df_filtrado = df_filtrado.head(80)
+    if len(df_filtrado) > 100:
+        df_filtrado = df_filtrado.head(100)
 
     return df_filtrado
 
