@@ -115,6 +115,15 @@ def filtrar_dados(df, pergunta):
 
     return df_filtrado
 
+COLUNAS_RELEVANTES = [
+    "Pedido", "PEDIDO", "OC", "Nº Pedido",
+    "Cliente", "CLIENTE",
+    "Peça", "PEÇA", "Descrição", "DESCRICAO", "Item",
+    "Vencimento", "VENCIMENTO", "Venc", "Data Venc",
+    "Status", "STATUS",
+    "Qtd", "QTD", "Quantidade",
+]
+
 def carregar_dados(pergunta):
     try:
         df = carregar_planilha_completa()
@@ -123,7 +132,13 @@ def carregar_dados(pergunta):
                 df = df[~df[col].astype(str).str.contains("Expedido|EXPEDIDO|expedido", na=False)]
                 break
         df_filtrado = filtrar_dados(df, pergunta)
-        return df_filtrado.to_string(index=False)
+        # Seleciona só colunas relevantes para caber mais linhas no contexto
+        cols_presentes = [c for c in COLUNAS_RELEVANTES if c in df_filtrado.columns]
+        if cols_presentes:
+            df_saida = df_filtrado[cols_presentes]
+        else:
+            df_saida = df_filtrado
+        return df_saida.to_string(index=False)
     except Exception as e:
         return f"Erro ao carregar planilha: {e}"
 
